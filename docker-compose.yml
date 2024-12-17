@@ -1,0 +1,30 @@
+version: '3'
+services:
+  mongodb:
+    image: mongo
+    environment:
+      - MONGO_INITDB_ROOT_USERNAME=root
+      - MONGO_INITDB_ROOT_PASSWORD=yourpassword
+      - MONGO_INITDB_DATABASE=customerDB
+    networks:
+      - app-network
+    ports:
+      - "27017:27017"
+  
+  customerapp:
+    image: customerapp
+    depends_on:
+      - mongodb
+    networks:
+      - app-network
+    ports:
+      - "3000:3000"
+    environment:
+      - MONGODB_URI=mongodb://root:yourpassword@mongodb:27017
+      - MONGODB_USERNAME=root
+      - MONGODB_PASSWORD=yourpassword
+    # Other environment variables
+
+networks:
+  app-network:
+    driver: bridge

@@ -11,6 +11,14 @@ const customersSchema = new Schema({
         type: String,   // Data type is String.
         required: true  // The field is required and must have a value.
     },
+    cust_fname: {
+        type: String,   // Data type is String.
+        required: true  // The field is required and must have a value.
+    },
+    cust_lname: {
+        type: String,   // Data type is String.
+        required: true  // The field is required and must have a value.
+    },
     // Field for storing the user's password as a string.
     password: {
         type: String,   // Data type is String.

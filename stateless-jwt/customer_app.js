@@ -4,18 +4,14 @@ const path = require('path');
 const mongoose = require('mongoose');            // MongoDB ODM library
 const Customers = require(path.join(__dirname, '..', 'customer'));         // Imported MongoDB model for 'customers'
 const express = require('express');              // Express.js web framework
+const jwt = require('jsonwebtoken');
 const bodyParser = require('body-parser');       // Middleware for parsing JSON requests
-const winston = require('winston');
-const bcrypt = require("bcrypt")
-const jwt = require('jsonwebtoken');  // Added JWT library
+const bcrypt = require("bcryptjs");
 const saltRounds = 5
-const usersTTL = 15 * 60 * 1000; // Set TTL (Time-to-Live) for users in memory (e.g., 15 minutes in milliseconds)
+const winston = require('winston');
+const { ValidationError, InvalidUserError, AuthenticationFailed } = require(path.join(__dirname, '..', '/errors/CustomError'));
 
-
-// Creating an instance of the Express application
 const app = express();
-
-// Setting the port number for the server
 const port = 3000;
 
 // Create a logger
@@ -30,10 +26,6 @@ const logger = winston.createLogger({
     ],
 });
 
-// A dictionary object to store username and password
-let usersdic = {};
-
-// MongoDB connection URI and database name
 const uri = `mongodb://${process.env.MONGODB_USERNAME}:${process.env.MONGODB_PASSWORD}@${process.env.MONGODB_URI}?authSource=admin`;
 mongoose.connect(uri, { 'dbName': 'customerDB' }); //mongoose.connect(uri, { 'dbName': 'customerDB' });
 
@@ -46,65 +38,82 @@ app.use('/static', express.static(path.join(".", 'frontend')));
 // Middleware to handle URL-encoded form data
 app.use(bodyParser.urlencoded({ extended: true }));
 
+let usersdic = {}; // In memory store for username and password
+
+const usersTTL = process.env.USERS_TTL || 15 * 60 * 1000; // Set TTL (Time-to-Live) for users in memory (e.g., 15 minutes in milliseconds)
+
 // POST endpoint for user login
-app.post('/api/login', async (req, res) => {
+app.post('/api/login', async (req, res, next) => {
     const data = req.body;
     // console.log(data);
-
     const user_name = data['user_name'];
     const password = data['password'];
 
     let user = usersdic[user_name]; // Check in-memory users first
 
-    if (!user) {
-        // If not in memory, check MongoDB
+    try {
+        debugger;
         const document = await Customers.findOne({ user_name: user_name });
         if (document) {
-            user = { hashedpwd: document.password };  // Fetch password from DB
-        } else {
-            logger.error(`Login failed: User ${user_name} not found`); // Log error
-            return res.status(401).send('User Information incorrect');
+            user = { hashedpwd: document.password };
         }
-    }
-
-    const result = await bcrypt.compare(password, user.hashedpwd);
-    if (result) {
-        const token = jwt.sign({ user_name: user_name }, process.env.SESSION_SECRET);
-        logger.info(`User ${user_name} logged in successfully with token: ${token}`); // Log successful login
-        res.status(200).redirect('/static/home.html'); // Redirect to the home page
-    } else {
-        logger.error(`Login failed: Incorrect password for user ${user_name}`); // Log error
-        res.status(401).send('Password incorrect');
+        if (!user || !user.hashedpwd) {
+            throw new InvalidUserError("No such user in database");
+        }
+        const isMatch = await bcrypt.compare(password, user.hashedpwd); // Compare the provided password with the hashed password in the database
+        if (!isMatch) {
+            throw new AuthenticationFailed("Password Incorrect! Try again");
+        } else {
+            const token = jwt.sign({ user_name: user_name }, process.env.SESSION_SECRET);
+            logger.info(`User ${user_name} logged in successfully with token: ${token}`); // Log successful login
+            res.status(200).redirect('/static/home.html'); // Redirect to the home page
+        }
+    } catch (error) {
+        next(error);
     }
 });
 
 // POST endpoint for adding a new customer
-app.post('/api/add_customer', async (req, res) => {
+app.post('/api/add_customer', async (req, res, next) => {
     const data = req.body;
-    console.log(data)
+    const age = parseInt(data['age']);
+    let cust_fname = data['cust_fname'];
+    let cust_lname = data['cust_lname'];
 
-    const documents = await Customers.find({ user_name: data['user_name'] });
-    if (documents.length > 0) {
-        return res.status(409).send("User already exists");
+    try {
+        if (age < 21) {
+            throw new ValidationError("Customer Under required age limit");
+        }
+        // Validate that first and last names are strings containing only letters
+        const nameRegex = /^[a-zA-Z\s-]+$/; // Regex to match only alphabetic characters
+        if (!nameRegex.test(cust_fname) || !nameRegex.test(cust_lname)) {
+            throw new ValidationError("Names must contain letters only");
+        }
+
+        const documents = await Customers.find({ user_name: data['user_name'] });
+        if (documents.length > 0) {
+            return res.send("User already exists");
+        }
+
+        let hashedpwd = bcrypt.hashSync(data['password'], saltRounds)
+
+        // Creating a new instance of the Customers model with data from the request
+        const customer = new Customers({
+            "user_name": data['user_name'],
+            "name": data['name'],
+            "cust_fname": data['cust_fname'],
+            "cust_lname": data['cust_lname'],
+            "age": data['age'],
+            "password": hashedpwd,
+            "email": data['email']
+        });
+        await customer.save(); // Saving the new customer to the MongoDB 'customers' collection
+
+        res.send("Customer added successfully")
+    } catch (error) {
+        next(error);
     }
-
-    const hashedpwd = await bcrypt.hash(data['password'], saltRounds);
-
-    // Store in-memory with TTL
-    usersdic[data['user_name']] = { hashedpwd, createdAt: Date.now() };
-
-    // Save to MongoDB
-    const customer = new Customers({
-        "user_name": data['user_name'],
-        "age": data['age'],
-        "password": hashedpwd,
-        "email": data['email']
-    });
-    await customer.save();
-
-    res.status(201).send("Customer added successfully");
 });
-
 // Function to clean expired users from memory periodically
 setInterval(() => {
     const now = Date.now();

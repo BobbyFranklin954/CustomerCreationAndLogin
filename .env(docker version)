@@ -1,0 +1,7 @@
+MONGODB_USERNAME=root
+MONGODB_PASSWORD=yourpassword
+MONGODB_URI=mongodb://root:yourpassword@mongodb:27017
+MONGODB_DB=customerDB
+SESSION_SECRET=guessagain
+APP_MODE=stateful-session
+USERS_TTL= 15 * 60 * 1000
